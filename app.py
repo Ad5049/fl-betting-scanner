@@ -1,6 +1,7 @@
 import urllib.request
 import json
 import re
+from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 
@@ -67,13 +68,16 @@ api_key_input = st.sidebar.text_input("API Key", value=DEFAULT_API_KEY)
 bankroll_input = st.sidebar.number_input("Total Bankroll ($)", value=500.00, step=25.00)
 base_unit_input = st.sidebar.number_input("Base Unit Size ($)", value=5.00, step=1.00)
 min_ev_input = st.sidebar.slider("Minimum Edge (+EV %)", min_value=1, max_value=15, value=5) / 100.0
+max_odds_input = st.sidebar.number_input("Max American Odds Cap (+400)", value=400, step=50)
 
 include_props = st.sidebar.checkbox("Include Player Props Scanning", value=True)
+exclude_live = st.sidebar.checkbox("Exclude Live / Started Games", value=True)
 
 if st.button("🚀 Run Live Market Scan", type="primary", use_container_width=True):
     clean_api_key = api_key_input.strip().lower()
+    now_utc = datetime.now(timezone.utc)
     
-    with st.spinner("Fetching live market data across Florida books..."):
+    with st.spinner("Fetching pre-match market data across Florida books..."):
         all_opportunities = []
         last_remaining = "Unknown"
 
@@ -87,6 +91,15 @@ if st.button("🚀 Run Live Market Scan", type="primary", use_container_width=Tr
             last_remaining = remaining
             if games and isinstance(games, list):
                 for game in games:
+                    commence_str = game.get("commence_time")
+                    if exclude_live and commence_str:
+                        try:
+                            commence_dt = datetime.fromisoformat(commence_str.replace("Z", "+00:00"))
+                            if commence_dt <= now_utc:
+                                continue
+                        except Exception:
+                            pass
+
                     home_team = game.get("home_team", "")
                     away_team = game.get("away_team", "")
                     sport_title = game.get("sport_title", "Unknown Sport")
@@ -163,6 +176,10 @@ if st.button("🚀 Run Live Market Scan", type="primary", use_container_width=Tr
                                     continue
                                 best_b = max(flo, key=flo.get)
                                 best_o = flo[best_b]
+
+                                if best_o > max_odds_input:
+                                    continue
+
                                 best_dec = american_to_decimal(best_o)
                                 b = best_dec - 1.0
                                 ev = (fair_p * b) - (1.0 - fair_p)
@@ -193,6 +210,15 @@ if st.button("🚀 Run Live Market Scan", type="primary", use_container_width=Tr
                     continue
 
                 for evt in events[:5]:
+                    commence_str = evt.get("commence_time")
+                    if exclude_live and commence_str:
+                        try:
+                            commence_dt = datetime.fromisoformat(commence_str.replace("Z", "+00:00"))
+                            if commence_dt <= now_utc:
+                                continue
+                        except Exception:
+                            pass
+
                     evt_id = evt.get("id")
                     home_team = evt.get("home_team", "")
                     away_team = evt.get("away_team", "")
@@ -261,6 +287,10 @@ if st.button("🚀 Run Live Market Scan", type="primary", use_container_width=Tr
                                     continue
                                 best_b = max(flo, key=flo.get)
                                 best_o = flo[best_b]
+
+                                if best_o > max_odds_input:
+                                    continue
+
                                 best_dec = american_to_decimal(best_o)
                                 b = best_dec - 1.0
                                 ev = (fair_p * b) - (1.0 - fair_p)
@@ -290,5 +320,5 @@ if st.button("🚀 Run Live Market Scan", type="primary", use_container_width=Tr
             st.success(f"Found {len(df)} +EV opportunities across Main Lines & Player Props:")
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:
-            st.info(f"No active lines found with Edge ≥ {min_ev_input*100:.1f}%.")
+            st.info(f"No active lines found with Edge ≥ {min_ev_input*100:.1f}% and Odds ≤ +{max_odds_input}.")
             
