@@ -13,7 +13,7 @@ REGIONS = "us,us2"
 BETS_FILE = "bets.json"
 
 MAIN_MARKETS = "h2h,spreads,totals"
-PROP_SPORTS = ["baseball_mlb", "americanfootball_nfl", "basketball_nba"]
+PROP_SPORTS = ["baseball_mlb", "americanfootball_nfl", "basketball_nba", "icehockey_nhl"]
 PROP_MARKETS = "pitcher_strikeouts,batter_total_bases,batter_hits,player_pass_yds,player_pass_tds,player_rush_yds,player_rec_yds,player_points,player_rebounds,player_assists"
 
 FL_PLACEABLE_BOOKS = [
@@ -84,7 +84,7 @@ def auto_settle_main_lines(api_key, bets):
     updated = False
     sports_to_check = list(set([b.get("sport_key", "baseball_mlb") for b in pending if b.get("sport_key")]))
     if not sports_to_check:
-        sports_to_check = ["basketball_euroleague", "baseball_mlb", "americanfootball_nfl", "basketball_nba"]
+        sports_to_check = ["basketball_euroleague", "baseball_mlb", "americanfootball_nfl", "basketball_nba", "icehockey_nhl"]
 
     for sport in sports_to_check:
         url = f"https://api.the-odds-api.com/v4/sports/{sport}/scores/?apiKey={api_key}&daysFrom=3"
@@ -233,7 +233,7 @@ def evaluate_markets(market_data, sport_title, matchup, sport_key, max_odds_cap,
                         "Selection": selection_disp,
                         "Platform": best_b,
                         "Odds": best_o,
-                        "Odds Disp": f"{best_o:+d}",
+                        "Odds Disp": f"{best_o:+d} ({best_dec:.2f}x)",
                         "Stake": wager,
                         "Stake Disp": f"${wager:.2f} ({u}u)",
                         "Net Profit": net_profit,
@@ -269,7 +269,6 @@ with tab1:
             all_opportunities = []
             last_remaining = "Unknown"
 
-            # 1. Main Lines
             main_url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey={clean_api_key}&regions={REGIONS}&markets={MAIN_MARKETS}&oddsFormat=american"
             games, err, remaining = fetch_json_with_status(main_url)
 
@@ -307,7 +306,6 @@ with tab1:
                         m_opps = evaluate_markets(m_data, sport_title, matchup, sport_key, max_odds_input, min_ev_input, bankroll_input, base_unit_input, is_prop=False)
                         all_opportunities.extend(m_opps)
 
-            # 2. Player Props
             if include_props:
                 for s_key in PROP_SPORTS:
                     events_url = f"https://api.the-odds-api.com/v4/sports/{s_key}/events/?apiKey={clean_api_key}"
@@ -351,7 +349,7 @@ with tab1:
     if "scan_results" in st.session_state and st.session_state.scan_results:
         st.info(f"API Credits Remaining: **{st.session_state.get('last_remaining', 'Unknown')}**")
         df_scan = pd.DataFrame(st.session_state.scan_results).sort_values(by="ev_raw", ascending=False)
-        disp_df = df_scan[["League", "Matchup", "Selection", "Platform", "Odds Disp", "Stake Disp", "Edge (+EV)"]].rename(columns={"Odds Disp": "Odds", "Stake Disp": "Stake"})
+        disp_df = df_scan[["League", "Matchup", "Selection", "Platform", "Odds Disp", "Stake Disp", "Edge (+EV)"]].rename(columns={"Odds Disp": "Odds (American / Decimal)", "Stake Disp": "Stake"})
         
         st.success(f"Found {len(df_scan)} +EV opportunities:")
         st.dataframe(disp_df, use_container_width=True, hide_index=True)
@@ -436,4 +434,4 @@ with tab2:
             if c3.button("🔴 Lost", key=f"loss_{bid}"):
                 b['status'] = 'LOST'
                 save_bets(bets)
-                st.reru
+        
