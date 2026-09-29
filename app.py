@@ -11,6 +11,7 @@ st.set_page_config(page_title="FL VIP +EV Command Center", page_icon="🎯", lay
 DEFAULT_API_KEY = "aa80562ae5fb97cfd71d78bc63a0cb1e"
 REGIONS = "us,us2"
 BETS_FILE = "bets.json"
+SWEEP_FILE = "sweeps.json"
 
 MAIN_MARKETS = "h2h,spreads,totals"
 PROP_SPORTS = ["baseball_mlb", "americanfootball_nfl", "basketball_nba", "icehockey_nhl"]
@@ -22,18 +23,18 @@ FL_PLACEABLE_BOOKS = [
     "bovada", "fliff", "rebet", "lucky rebel", "prizepicks", "novig"
 ]
 
-def load_bets():
-    if os.path.exists(BETS_FILE):
+def load_json(filepath):
+    if os.path.exists(filepath):
         try:
-            with open(BETS_FILE, "r") as f:
+            with open(filepath, "r") as f:
                 return json.load(f)
         except Exception:
-            return []
-    return []
+            return [] if "bets" in filepath else {"total_withdrawn": 0.0}
+    return [] if "bets" in filepath else {"total_withdrawn": 0.0}
 
-def save_bets(bets):
-    with open(BETS_FILE, "w") as f:
-        json.dump(bets, f, indent=2)
+def save_json(data, filepath):
+    with open(filepath, "w") as f:
+        json.dump(data, f, indent=2)
 
 def american_to_implied(odds):
     return 100.0 / (odds + 100.0) if odds > 0 else abs(odds) / (abs(odds) + 100.0)
@@ -220,7 +221,8 @@ def evaluate_markets(market_data, sport_title, matchup, sport_key, max_odds_cap,
                 ev = (fair_p * b) - (1.0 - fair_p)
 
                 if ev >= min_ev_val:
-                    u, wager, net_profit, payout = calculate_quarter_kelly(ev, best_dec, bankroll_val, unit_val)
+                    # STRICT $500 BANKROLL ANCHOR FOR KELLY SIZING
+                    u, wager, net_profit, payout = calculate_quarter_kelly(ev, best_dec, 500.00, unit_val)
                     if is_prop:
                         mkt_disp = m_key.replace("_", " ").title()
                         selection_disp = f"{mkt_disp}: {line_key} - {side_name}"
@@ -246,11 +248,13 @@ def evaluate_markets(market_data, sport_title, matchup, sport_key, max_odds_cap,
 st.title("🎯 Florida VIP +EV Scanner & Bet Command")
 
 if "tracked_bets" not in st.session_state:
-    st.session_state.tracked_bets = load_bets()
+    st.session_state.tracked_bets = load_json(BETS_FILE)
+if "sweep_data" not in st.session_state:
+    st.session_state.sweep_data = load_json(SWEEP_FILE)
 
 st.sidebar.header("⚙️ Controls")
 api_key_input = st.sidebar.text_input("API Key", value=DEFAULT_API_KEY)
-bankroll_input = st.sidebar.number_input("Starting Bankroll ($)", value=500.00, step=25.00)
+bankroll_input = st.sidebar.number_input("Operational Capital Base ($)", value=500.00, step=25.00)
 base_unit_input = st.sidebar.number_input("Base Unit Size ($)", value=5.00, step=1.00)
 min_ev_input = st.sidebar.slider("Minimum Edge (+EV %)", min_value=1, max_value=15, value=5) / 100.0
 max_odds_input = st.sidebar.number_input("Max American Odds Cap (+400)", value=400, step=50)
@@ -382,56 +386,43 @@ with tab1:
                     "sport_key": item.get("sport_key", "")
                 }
                 st.session_state.tracked_bets.append(new_bet)
-                save_bets(st.session_state.tracked_bets)
+                save_json(st.session_state.tracked_bets, BETS_FILE)
                 st.success(f"Logged wager #{new_bet['id']} ({item.get('Selection')})!")
                 st.rerun()
 
 with tab2:
     bets = st.session_state.tracked_bets
+    sweep_data = st.session_state.sweep_data
     
-    realized_profit = sum([b.get('potential_profit', 0.0) if b.get('status') == 'WON' else (-b.get('stake', 0.0) if b.get('status') == 'LOST' else 0.0) for b in bets])
+    weekly_profit = sum([b.get('potential_profit', 0.0) if b.get('status') == 'WON' else (-b.get('stake', 0.0) if b.get('status') == 'LOST' else 0.0) for b in bets])
     pending_staked = sum([b.get('stake', 0.0) for b in bets if b.get('status') == 'PENDING'])
-    current_bankroll = bankroll_input + realized_profit
+    current_bankroll = bankroll_input + weekly_profit
     active_liquid = current_bankroll - pending_staked
+    all_time_withdrawn = sweep_data.get("total_withdrawn", 0.0)
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Live Bankroll", f"${current_bankroll:.2f}")
-    col2.metric("Realized Net Profit", f"${realized_profit:+.2f}")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Weekly Bankroll", f"${current_bankroll:.2f}")
+    col2.metric("Weekly Profit", f"${weekly_profit:+.2f}")
     col3.metric("Pending Exposure", f"${pending_staked:.2f}")
     col4.metric("Available Capital", f"${active_liquid:.2f}")
+    col5.metric("Total Bank Withdrawn", f"${all_time_withdrawn:.2f}")
 
     st.markdown("---")
     
-    if st.button("🔄 Auto-Settle Main Line Bets (via API Scores)", type="primary"):
-        clean_api_key = api_key_input.strip().lower()
-        updated_bets, changed = auto_settle_main_lines(clean_api_key, bets)
-        if changed:
-            st.session_state.tracked_bets = updated_bets
-            save_bets(updated_bets)
-            st.success("Auto-settlement completed!")
-            st.rerun()
-        else:
-            st.info("No main line pending bets match completed games in score feed.")
-
-    st.subheader("⏳ Pending Bets")
-    pending_list = [b for b in bets if b.get('status') == 'PENDING']
-    
-    if not pending_list:
-        st.info("No pending wagers logged.")
-    else:
-        for b in pending_list:
-            c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
-            bid = b.get('id')
-            bsel = b.get('selection')
-            bplat = b.get('platform')
-            bodds = b.get('odds', 0)
-            bstake = b.get('stake', 0.0)
-            c1.write(f"**#{bid} {bsel}** | {bplat} ({bodds:+d}) | ${bstake:.2f}")
-            if c2.button("🟢 Won", key=f"win_{bid}"):
-                b['status'] = 'WON'
-                save_bets(bets)
+    col_a, col_b = st.columns([1, 1])
+    with col_a:
+        if st.button("🔄 Auto-Settle Main Line Bets", type="primary", use_container_width=True):
+            clean_api_key = api_key_input.strip().lower()
+            updated_bets, changed = auto_settle_main_lines(clean_api_key, bets)
+            if changed:
+                st.session_state.tracked_bets = updated_bets
+                save_json(updated_bets, BETS_FILE)
+                st.success("Auto-settlement completed!")
                 st.rerun()
-            if c3.button("🔴 Lost", key=f"loss_{bid}"):
-                b['status'] = 'LOST'
-                save_bets(bets)
-        
+            else:
+                st.info("No main line pending bets match completed games in score feed.")
+
+    with col_b:
+        if st.button("🧹 Sunday Profit Sweep & Reset Baseline", use_container_width=True):
+            if weekly_profit <= 0 and not any(b.get('status') != 'PENDING' for b in bets):
+    
