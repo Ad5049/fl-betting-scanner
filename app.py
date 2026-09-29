@@ -419,8 +419,8 @@ with tab2:
                 st.success("Auto-settlement completed!")
                 st.rerun()
             else:
-                st.info("No main line pending bets match completed games in score feed.")
-     with col_b:
+                st.info("No main line pen
+                    with col_b:
         if st.button("🧹 Sunday Profit Sweep & Reset Baseline", use_container_width=True):
             if weekly_profit <= 0 and not any(b.get('status') != 'PENDING' for b in bets):
                 st.warning("No profits to sweep.")
