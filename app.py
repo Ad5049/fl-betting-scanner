@@ -7,7 +7,7 @@ import streamlit as st
 st.set_page_config(page_title="FL VIP +EV Command Center", page_icon="🎯", layout="wide")
 
 DEFAULT_API_KEY = "aa80562ae5fb97cfd71d78bc63a0cb1e"
-REGIONS = "us,us_offshore"
+REGIONS = "us,us2"
 
 MAIN_MARKETS = "h2h,spreads,totals"
 PROP_SPORTS = ["baseball_mlb", "americanfootball_nfl", "basketball_nba"]
@@ -169,7 +169,7 @@ if st.button("🚀 Run Live Market Scan", type="primary", use_container_width=Tr
 
                                 if ev >= min_ev_input:
                                     u, wager, net_profit, payout = calculate_quarter_kelly(ev, best_dec, bankroll_input, base_unit_input)
-                                    selection_disp = f"{mkt_display_name if 'mkt_display_name' in locals() else m_key.upper()}: {side_name}" if line_key == "main" else f"{m_key.upper()}: {side_name} ({line_key})"
+                                    selection_disp = f"{m_key.upper()}: {side_name}" if line_key == "main" else f"{m_key.upper()}: {side_name} ({line_key})"
                                     all_opportunities.append({
                                         "League": sport_title,
                                         "Matchup": matchup,
