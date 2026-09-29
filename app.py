@@ -22,7 +22,6 @@ FL_PLACEABLE_BOOKS = [
     "bovada", "fliff", "rebet", "lucky rebel", "prizepicks", "novig"
 ]
 
-# --- PERSISTENCE HELPERS ---
 def load_bets():
     if os.path.exists(BETS_FILE):
         try:
@@ -36,7 +35,6 @@ def save_bets(bets):
     with open(BETS_FILE, "w") as f:
         json.dump(bets, f, indent=2)
 
-# --- MATH & CONVERSIONS ---
 def american_to_implied(odds):
     return 100.0 / (odds + 100.0) if odds > 0 else abs(odds) / (abs(odds) + 100.0)
 
@@ -128,7 +126,7 @@ def auto_settle_main_lines(api_key, bets):
                             away_score = v
 
                     if home_score is not None and away_score is not None:
-                        sel = b.get("selection", "").upper()
+                        sel = str(b.get("selection", "")).upper()
                         if "HOME" in sel or home_team.upper() in sel:
                             b["status"] = "WON" if home_score > away_score else ("LOST" if home_score < away_score else "PUSH")
                             updated = True
@@ -138,7 +136,6 @@ def auto_settle_main_lines(api_key, bets):
 
     return bets, updated
 
-# --- INITIALIZE SESSION ---
 st.title("🎯 Florida VIP +EV Scanner & Bet Command")
 
 if "tracked_bets" not in st.session_state:
@@ -156,7 +153,6 @@ exclude_live = st.sidebar.checkbox("Exclude Live / Started Games", value=True)
 
 tab1, tab2 = st.tabs(["🎯 Live +EV Scanner", "📊 Bet Tracker & Bankroll"])
 
-# --- TAB 1: SCANNER ---
 with tab1:
     if st.button("🚀 Run Live Market Scan", type="primary", use_container_width=True):
         clean_api_key = api_key_input.strip().lower()
@@ -166,7 +162,6 @@ with tab1:
             all_opportunities = []
             last_remaining = "Unknown"
 
-            # 1. Main Lines Scan
             main_url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey={clean_api_key}&regions={REGIONS}&markets={MAIN_MARKETS}&oddsFormat=american"
             games, err, remaining = fetch_json_with_status(main_url)
 
@@ -288,7 +283,6 @@ with tab1:
                                             "ev_raw": ev
                                         })
 
-            # 2. Player Props Scan
             if include_props:
                 for s_key in PROP_SPORTS:
                     events_url = f"https://api.the-odds-api.com/v4/sports/{s_key}/events/?apiKey={clean_api_key}"
@@ -395,4 +389,7 @@ with tab1:
                                             "Odds Disp": f"{best_o:+d}",
                                             "Stake": wager,
                                             "Stake Disp": f"${wager:.2f} ({u}u)",
-                                            "
+                                            "Net Profit": net_profit,
+                                            "Edge (+EV)": f"{ev * 100:+.2f}%",
+                                            "sport_key": s_key,
+        
