@@ -17,7 +17,6 @@ MAIN_MARKETS = "h2h,spreads,totals"
 PROP_SPORTS = ["baseball_mlb", "americanfootball_nfl", "basketball_nba", "icehockey_nhl"]
 PROP_MARKETS = "pitcher_strikeouts,batter_total_bases,batter_hits,player_pass_yds,player_pass_tds,player_rush_yds,player_rec_yds,player_points,player_rebounds,player_assists"
 
-# Included Hard Rock, DraftKings, Bovada, and MyBookie
 FL_PLACEABLE_BOOKS = [
     "hard rock", "hardrock",
     "draftkings", "draft king", "dk",
@@ -395,8 +394,8 @@ with tab2:
     bets = st.session_state.tracked_bets
     sweep_data = st.session_state.sweep_data
     
-    weekly_profit = sum([b.get('potential_profit', 0.0) if b.get('status'] == 'WON' else (-b.get('stake', 0.0) if b.get('status'] == 'LOST' else 0.0) for b in bets])
-    pending_staked = sum([b.get('stake', 0.0) for b in bets if b.get('status'] == 'PENDING'])
+    weekly_profit = sum([b.get('potential_profit', 0.0) if b.get('status') == 'WON' else (-b.get('stake', 0.0) if b.get('status') == 'LOST' else 0.0) for b in bets])
+    pending_staked = sum([b.get('stake', 0.0) for b in bets if b.get('status') == 'PENDING'])
     current_bankroll = bankroll_input + weekly_profit
     active_liquid = current_bankroll - pending_staked
     all_time_withdrawn = sweep_data.get("total_withdrawn", 0.0)
@@ -427,4 +426,6 @@ with tab2:
         if st.button("🧹 Sunday Profit Sweep & Reset Baseline", use_container_width=True):
             sweep_data["total_withdrawn"] = round(sweep_data.get("total_withdrawn", 0.0) + max(0.0, weekly_profit), 2)
             st.session_state.sweep_data = sweep_data
-            save_json(sweep_data, SWEE
+            save_json(sweep_data, SWEEP_FILE)
+
+            st.session_state.tracked_bets = [b
