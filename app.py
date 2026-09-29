@@ -136,6 +136,113 @@ def auto_settle_main_lines(api_key, bets):
 
     return bets, updated
 
+def process_bookmakers(bookmakers, clean_home, clean_away, home_team, away_team, is_prop=False):
+    market_data = {}
+    for book in bookmakers:
+        b_name = book.get("title", "")
+        for mkt in book.get("markets", []):
+            m_key = mkt.get("key", "")
+            if m_key not in market_data:
+                market_data[m_key] = {}
+
+            for outcome in mkt.get("outcomes", []):
+                raw_name = outcome.get("name", "")
+                player_desc = outcome.get("description", "")
+                point = outcome.get("point", None)
+                price = outcome.get("price")
+                if price is None:
+                    continue
+
+                if is_prop:
+                    if not player_desc:
+                        continue
+                    point_str = f" {point}" if point is not None else ""
+                    line_key = f"{player_desc} ({point_str.strip()})"
+                    side_label = raw_name.upper()
+                else:
+                    clean_raw = normalize_text(raw_name)
+                    if clean_raw in clean_home or clean_home in clean_raw or clean_raw == "home":
+                        side_label = f"HOME: {home_team}"
+                    elif clean_raw in clean_away or clean_away in clean_raw or clean_raw == "away":
+                        side_label = f"AWAY: {away_team}"
+                    elif "draw" in clean_raw or clean_raw == "tie":
+                        side_label = "DRAW"
+                    elif "over" in clean_raw:
+                        side_label = "OVER"
+                    elif "under" in clean_raw:
+                        side_label = "UNDER"
+                    else:
+                        side_label = raw_name
+
+                    line_key = str(abs(float(point))) if m_key == "spreads" else (str(point) if m_key == "totals" else "main")
+
+                if line_key not in market_data[m_key]:
+                    market_data[m_key][line_key] = {}
+                if side_label not in market_data[m_key][line_key]:
+                    market_data[m_key][line_key][side_label] = {}
+
+                market_data[m_key][line_key][side_label][b_name] = price
+    return market_data
+
+def evaluate_markets(market_data, sport_title, matchup, sport_key, max_odds_cap, min_ev_val, bankroll_val, unit_val, is_prop=False):
+    opps = []
+    for m_key, lines in market_data.items():
+        for line_key, sides in lines.items():
+            if len(sides) < 2:
+                continue
+            side_avg_implied = {}
+            valid_market = True
+            for side_name, books_dict in sides.items():
+                if len(books_dict) < 2:
+                    valid_market = False
+                    break
+                side_avg_implied[side_name] = sum(american_to_implied(p) for p in books_dict.values()) / len(books_dict)
+            if not valid_market:
+                continue
+            total_hold = sum(side_avg_implied.values())
+            if total_hold <= 0:
+                continue
+            fair_probs = {side_name: imp / total_hold for side_name, imp in side_avg_implied.items()}
+
+            for side_name, books_dict in sides.items():
+                fair_p = fair_probs[side_name]
+                flo = {b: p for b, p in books_dict.items() if is_fl_book(b)}
+                if not flo:
+                    continue
+                best_b = max(flo, key=flo.get)
+                best_o = flo[best_b]
+
+                if best_o > max_odds_cap:
+                    continue
+
+                best_dec = american_to_decimal(best_o)
+                b = best_dec - 1.0
+                ev = (fair_p * b) - (1.0 - fair_p)
+
+                if ev >= min_ev_val:
+                    u, wager, net_profit, payout = calculate_quarter_kelly(ev, best_dec, bankroll_val, unit_val)
+                    if is_prop:
+                        mkt_disp = m_key.replace("_", " ").title()
+                        selection_disp = f"{mkt_disp}: {line_key} - {side_name}"
+                    else:
+                        selection_disp = f"{m_key.upper()}: {side_name}" if line_key == "main" else f"{m_key.upper()}: {side_name} ({line_key})"
+                    
+                    opps.append({
+                        "League": sport_title,
+                        "Matchup": matchup,
+                        "Selection": selection_disp,
+                        "Platform": best_b,
+                        "Odds": best_o,
+                        "Odds Disp": f"{best_o:+d}",
+                        "Stake": wager,
+                        "Stake Disp": f"${wager:.2f} ({u}u)",
+                        "Net Profit": net_profit,
+                        "Edge (+EV)": f"{ev * 100:+.2f}%",
+                        "sport_key": sport_key,
+                        "ev_raw": ev
+                    })
+    return opps
+
 st.title("🎯 Florida VIP +EV Scanner & Bet Command")
 
 if "tracked_bets" not in st.session_state:
@@ -162,6 +269,7 @@ with tab1:
             all_opportunities = []
             last_remaining = "Unknown"
 
+            # 1. Main Lines
             main_url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey={clean_api_key}&regions={REGIONS}&markets={MAIN_MARKETS}&oddsFormat=american"
             games, err, remaining = fetch_json_with_status(main_url)
 
@@ -195,94 +303,11 @@ with tab1:
                         if len(bookmakers) < 2:
                             continue
 
-                        market_data = {}
-                        for book in bookmakers:
-                            b_name = book["title"]
-                            for mkt in book.get("markets", []):
-                                m_key = mkt["key"]
-                                if m_key not in market_data:
-                                    market_data[m_key] = {}
+                        m_data = process_bookmakers(bookmakers, clean_home, clean_away, home_team, away_team, is_prop=False)
+                        m_opps = evaluate_markets(m_data, sport_title, matchup, sport_key, max_odds_input, min_ev_input, bankroll_input, base_unit_input, is_prop=False)
+                        all_opportunities.extend(m_opps)
 
-                                for outcome in mkt.get("outcomes", []):
-                                    raw_name = outcome.get("name", "")
-                                    point = outcome.get("point", None)
-                                    price = outcome.get("price")
-                                    if price is None:
-                                        continue
-
-                                    clean_raw = normalize_text(raw_name)
-                                    if clean_raw in clean_home or clean_home in clean_raw or clean_raw == "home":
-                                        side_label = f"HOME: {home_team}"
-                                    elif clean_raw in clean_away or clean_away in clean_raw or clean_raw == "away":
-                                        side_label = f"AWAY: {away_team}"
-                                    elif "draw" in clean_raw or clean_raw == "tie":
-                                        side_label = "DRAW"
-                                    elif "over" in clean_raw:
-                                        side_label = "OVER"
-                                    elif "under" in clean_raw:
-                                        side_label = "UNDER"
-                                    else:
-                                        side_label = raw_name
-
-                                    line_key = str(abs(float(point))) if m_key == "spreads" else (str(point) if m_key == "totals" else "main")
-                                    if line_key not in market_data[m_key]:
-                                        market_data[m_key][line_key] = {}
-                                    if side_label not in market_data[m_key][line_key]:
-                                        market_data[m_key][line_key][side_label] = {}
-
-                                    market_data[m_key][line_key][side_label][b_name] = price
-
-                        for m_key, lines in market_data.items():
-                            for line_key, sides in lines.items():
-                                if len(sides) < 2:
-                                    continue
-                                side_avg_implied = {}
-                                valid_market = True
-                                for side_name, books_dict in sides.items():
-                                    if len(books_dict) < 2:
-                                        valid_market = False
-                                        break
-                                    side_avg_implied[side_name] = sum(american_to_implied(p) for p in books_dict.values()) / len(books_dict)
-                                if not valid_market:
-                                    continue
-                                total_hold = sum(side_avg_implied.values())
-                                if total_hold <= 0:
-                                    continue
-                                fair_probs = {side_name: imp / total_hold for side_name, imp in side_avg_implied.items()}
-
-                                for side_name, books_dict in sides.items():
-                                    fair_p = fair_probs[side_name]
-                                    flo = {b: p for b, p in books_dict.items() if is_fl_book(b)}
-                                    if not flo:
-                                        continue
-                                    best_b = max(flo, key=flo.get)
-                                    best_o = flo[best_b]
-
-                                    if best_o > max_odds_input:
-                                        continue
-
-                                    best_dec = american_to_decimal(best_o)
-                                    b = best_dec - 1.0
-                                    ev = (fair_p * b) - (1.0 - fair_p)
-
-                                    if ev >= min_ev_input:
-                                        u, wager, net_profit, payout = calculate_quarter_kelly(ev, best_dec, bankroll_input, base_unit_input)
-                                        selection_disp = f"{m_key.upper()}: {side_name}" if line_key == "main" else f"{m_key.upper()}: {side_name} ({line_key})"
-                                        all_opportunities.append({
-                                            "League": sport_title,
-                                            "Matchup": matchup,
-                                            "Selection": selection_disp,
-                                            "Platform": best_b,
-                                            "Odds": best_o,
-                                            "Odds Disp": f"{best_o:+d}",
-                                            "Stake": wager,
-                                            "Stake Disp": f"${wager:.2f} ({u}u)",
-                                            "Net Profit": net_profit,
-                                            "Edge (+EV)": f"{ev * 100:+.2f}%",
-                                            "sport_key": sport_key,
-                                            "ev_raw": ev
-                                        })
-
+            # 2. Player Props
             if include_props:
                 for s_key in PROP_SPORTS:
                     events_url = f"https://api.the-odds-api.com/v4/sports/{s_key}/events/?apiKey={clean_api_key}"
@@ -316,80 +341,99 @@ with tab1:
                         if len(bookmakers) < 2:
                             continue
 
-                        prop_market_data = {}
-                        for book in bookmakers:
-                            b_name = book["title"]
-                            for mkt in book.get("markets", []):
-                                m_key = mkt["key"]
-                                if m_key not in prop_market_data:
-                                    prop_market_data[m_key] = {}
+                        p_data_dict = process_bookmakers(bookmakers, normalize_text(home_team), normalize_text(away_team), home_team, away_team, is_prop=True)
+                        p_opps = evaluate_markets(p_data_dict, s_key.replace("_", " ").upper(), matchup, s_key, max_odds_input, min_ev_input, bankroll_input, base_unit_input, is_prop=True)
+                        all_opportunities.extend(p_opps)
 
-                                for outcome in mkt.get("outcomes", []):
-                                    raw_name = outcome.get("name", "")
-                                    player_desc = outcome.get("description", "")
-                                    point = outcome.get("point", None)
-                                    price = outcome.get("price")
-                                    if price is None or not player_desc:
-                                        continue
+            st.session_state.scan_results = all_opportunities
+            st.session_state.last_remaining = last_remaining
 
-                                    point_str = f" {point}" if point is not None else ""
-                                    line_key = f"{player_desc} ({point_str.strip()})"
-                                    side_label = raw_name.upper()
-
-                                    if line_key not in prop_market_data[m_key]:
-                                        prop_market_data[m_key][line_key] = {}
-                                    if side_label not in prop_market_data[m_key][line_key]:
-                                        prop_market_data[m_key][line_key][side_label] = {}
-
-                                    prop_market_data[m_key][line_key][side_label][b_name] = price
-
-                        for m_key, lines in prop_market_data.items():
-                            for line_key, sides in lines.items():
-                                if len(sides) < 2:
-                                    continue
-                                side_avg_implied = {}
-                                valid_market = True
-                                for side_name, books_dict in sides.items():
-                                    if len(books_dict) < 2:
-                                        valid_market = False
-                                        break
-                                    side_avg_implied[side_name] = sum(american_to_implied(p) for p in books_dict.values()) / len(books_dict)
-                                if not valid_market:
-                                    continue
-                                total_hold = sum(side_avg_implied.values())
-                                if total_hold <= 0:
-                                    continue
-                                fair_probs = {side_name: imp / total_hold for side_name, imp in side_avg_implied.items()}
-
-                                for side_name, books_dict in sides.items():
-                                    fair_p = fair_probs[side_name]
-                                    flo = {b: p for b, p in books_dict.items() if is_fl_book(b)}
-                                    if not flo:
-                                        continue
-                                    best_b = max(flo, key=flo.get)
-                                    best_o = flo[best_b]
-
-                                    if best_o > max_odds_input:
-                                        continue
-
-                                    best_dec = american_to_decimal(best_o)
-                                    b = best_dec - 1.0
-                                    ev = (fair_p * b) - (1.0 - fair_p)
-
-                                    if ev >= min_ev_input:
-                                        u, wager, net_profit, payout = calculate_quarter_kelly(ev, best_dec, bankroll_input, base_unit_input)
-                                        mkt_display_name = m_key.replace("_", " ").title()
-                                        selection_disp = f"{mkt_display_name}: {line_key} - {side_name}"
-                                        all_opportunities.append({
-                                            "League": s_key.replace("_", " ").upper(),
-                                            "Matchup": matchup,
-                                            "Selection": selection_disp,
-                                            "Platform": best_b,
-                                            "Odds": best_o,
-                                            "Odds Disp": f"{best_o:+d}",
-                                            "Stake": wager,
-                                            "Stake Disp": f"${wager:.2f} ({u}u)",
-                                            "Net Profit": net_profit,
-                                            "Edge (+EV)": f"{ev * 100:+.2f}%",
-                                            "sport_key": s_key,
+    if "scan_results" in st.session_state and st.session_state.scan_results:
+        st.info(f"API Credits Remaining: **{st.session_state.get('last_remaining', 'Unknown')}**")
+        df_scan = pd.DataFrame(st.session_state.scan_results).sort_values(by="ev_raw", ascending=False)
+        disp_df = df_scan[["League", "Matchup", "Selection", "Platform", "Odds Disp", "Stake Disp", "Edge (+EV)"]].rename(columns={"Odds Disp": "Odds", "Stake Disp": "Stake"})
         
+        st.success(f"Found {len(df_scan)} +EV opportunities:")
+        st.dataframe(disp_df, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.subheader("📌 Log Wager to App Tracker")
+        records = df_scan.to_dict('records')
+        options = [f"{i}: {r.get('Selection')} ({r.get('Platform')} {r.get('Odds Disp')})" for i, r in enumerate(records)]
+        selected_opt = st.selectbox("Select Play Placed:", options)
+        
+        if selected_opt:
+            idx = int(selected_opt.split(":")[0])
+            item = records[idx]
+            actual_stake = st.number_input("Actual Dollar Stake ($)", value=float(item.get('Stake', 2.50)), step=0.50)
+            actual_odds = st.number_input("Actual Placed Odds (American)", value=int(item.get('Odds', 100)), step=10)
+
+            if st.button("✅ Confirm & Log Wager"):
+                dec = american_to_decimal(actual_odds)
+                potential_profit = round(actual_stake * (dec - 1.0), 2)
+                new_bet = {
+                    "id": len(st.session_state.tracked_bets) + 1,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "matchup": item.get("Matchup", ""),
+                    "selection": item.get("Selection", ""),
+                    "platform": item.get("Platform", ""),
+                    "odds": actual_odds,
+                    "stake": actual_stake,
+                    "potential_profit": potential_profit,
+                    "status": "PENDING",
+                    "sport_key": item.get("sport_key", "")
+                }
+                st.session_state.tracked_bets.append(new_bet)
+                save_bets(st.session_state.tracked_bets)
+                st.success(f"Logged wager #{new_bet['id']} ({item.get('Selection')})!")
+                st.rerun()
+
+with tab2:
+    bets = st.session_state.tracked_bets
+    
+    realized_profit = sum([b.get('potential_profit', 0.0) if b.get('status') == 'WON' else (-b.get('stake', 0.0) if b.get('status') == 'LOST' else 0.0) for b in bets])
+    pending_staked = sum([b.get('stake', 0.0) for b in bets if b.get('status') == 'PENDING'])
+    current_bankroll = bankroll_input + realized_profit
+    active_liquid = current_bankroll - pending_staked
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Live Bankroll", f"${current_bankroll:.2f}")
+    col2.metric("Realized Net Profit", f"${realized_profit:+.2f}")
+    col3.metric("Pending Exposure", f"${pending_staked:.2f}")
+    col4.metric("Available Capital", f"${active_liquid:.2f}")
+
+    st.markdown("---")
+    
+    if st.button("🔄 Auto-Settle Main Line Bets (via API Scores)", type="primary"):
+        clean_api_key = api_key_input.strip().lower()
+        updated_bets, changed = auto_settle_main_lines(clean_api_key, bets)
+        if changed:
+            st.session_state.tracked_bets = updated_bets
+            save_bets(updated_bets)
+            st.success("Auto-settlement completed!")
+            st.rerun()
+        else:
+            st.info("No main line pending bets match completed games in score feed.")
+
+    st.subheader("⏳ Pending Bets")
+    pending_list = [b for b in bets if b.get('status') == 'PENDING']
+    
+    if not pending_list:
+        st.info("No pending wagers logged.")
+    else:
+        for b in pending_list:
+            c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
+            bid = b.get('id')
+            bsel = b.get('selection')
+            bplat = b.get('platform')
+            bodds = b.get('odds', 0)
+            bstake = b.get('stake', 0.0)
+            c1.write(f"**#{bid} {bsel}** | {bplat} ({bodds:+d}) | ${bstake:.2f}")
+            if c2.button("🟢 Won", key=f"win_{bid}"):
+                b['status'] = 'WON'
+                save_bets(bets)
+                st.rerun()
+            if c3.button("🔴 Lost", key=f"loss_{bid}"):
+                b['status'] = 'LOST'
+                save_bets(bets)
+                st.reru
