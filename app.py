@@ -6,15 +6,12 @@ import streamlit as st
 
 st.set_page_config(page_title="FL VIP +EV Command Center", page_icon="🎯", layout="wide")
 
-DEFAULT_API_KEY = "Aa80562ae5fb97cfd71d78bc63a0cb1e"
+DEFAULT_API_KEY = "aa80562ae5fb97cfd71d78bc63a0cb1e"
 REGIONS = "us,us_offshore"
 
-MAIN_MARKETS = ["h2h", "spreads", "totals"]
-PROP_MARKETS = [
-    "pitcher_strikeouts", "batter_total_bases", "batter_hits",
-    "player_pass_yds", "player_pass_tds", "player_rush_yds", "player_rec_yds",
-    "player_points", "player_rebounds", "player_assists"
-]
+MAIN_MARKETS = "h2h,spreads,totals"
+PROP_SPORTS = ["baseball_mlb", "americanfootball_nfl", "basketball_nba"]
+PROP_MARKETS = "pitcher_strikeouts,batter_total_bases,batter_hits,player_pass_yds,player_pass_tds,player_rush_yds,player_rec_yds,player_points,player_rebounds,player_assists"
 
 FL_PLACEABLE_BOOKS = [
     "hard rock", "hardrock",
@@ -74,58 +71,51 @@ min_ev_input = st.sidebar.slider("Minimum Edge (+EV %)", min_value=1, max_value=
 include_props = st.sidebar.checkbox("Include Player Props Scanning", value=True)
 
 if st.button("🚀 Run Live Market Scan", type="primary", use_container_width=True):
-    selected_markets = MAIN_MARKETS + PROP_MARKETS if include_props else MAIN_MARKETS
-    markets_param = ",".join(selected_markets)
+    clean_api_key = api_key_input.strip().lower()
+    
+    with st.spinner("Fetching live market data across Florida books..."):
+        all_opportunities = []
+        last_remaining = "Unknown"
 
-    with st.spinner("Executing N-Way Devigging across Florida books & Player Prop Boards..."):
-        url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey={api_key_input}&regions={REGIONS}&markets={markets_param}&oddsFormat=american"
-        games, err, remaining = fetch_json_with_status(url)
+        # 1. Main Lines Scan (Bulk /upcoming)
+        main_url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey={clean_api_key}&regions={REGIONS}&markets={MAIN_MARKETS}&oddsFormat=american"
+        games, err, remaining = fetch_json_with_status(main_url)
 
         if err:
-            st.error(f"❌ API Error: {err}. Please verify key validity and credit balance at the-odds-api.com.")
-        elif not games or not isinstance(games, list):
-            st.warning("No upcoming game data returned.")
+            st.error(f"❌ Main Market API Error: {err}")
         else:
-            st.info(f"API Credits Remaining: **{remaining}**")
-            all_opportunities = []
+            last_remaining = remaining
+            if games and isinstance(games, list):
+                for game in games:
+                    home_team = game.get("home_team", "")
+                    away_team = game.get("away_team", "")
+                    sport_title = game.get("sport_title", "Unknown Sport")
+                    if not home_team or not away_team:
+                        continue
 
-            for game in games:
-                home_team = game.get("home_team", "")
-                away_team = game.get("away_team", "")
-                sport_title = game.get("sport_title", "Unknown Sport")
-                if not home_team or not away_team:
-                    continue
+                    matchup = f"{away_team} @ {home_team}"
+                    clean_home = normalize_text(home_team)
+                    clean_away = normalize_text(away_team)
 
-                matchup = f"{away_team} @ {home_team}"
-                clean_home = normalize_text(home_team)
-                clean_away = normalize_text(away_team)
+                    bookmakers = game.get("bookmakers", [])
+                    if len(bookmakers) < 2:
+                        continue
 
-                bookmakers = game.get("bookmakers", [])
-                if len(bookmakers) < 2:
-                    continue
+                    market_data = {}
+                    for book in bookmakers:
+                        b_name = book["title"]
+                        for mkt in book.get("markets", []):
+                            m_key = mkt["key"]
+                            if m_key not in market_data:
+                                market_data[m_key] = {}
 
-                market_data = {}
+                            for outcome in mkt.get("outcomes", []):
+                                raw_name = outcome.get("name", "")
+                                point = outcome.get("point", None)
+                                price = outcome.get("price")
+                                if price is None:
+                                    continue
 
-                for book in bookmakers:
-                    b_name = book["title"]
-                    for mkt in book.get("markets", []):
-                        m_key = mkt["key"]
-                        if m_key not in market_data:
-                            market_data[m_key] = {}
-
-                        for outcome in mkt.get("outcomes", []):
-                            raw_name = outcome.get("name", "")
-                            player_desc = outcome.get("description", "")
-                            point = outcome.get("point", None)
-                            price = outcome.get("price")
-                            if price is None:
-                                continue
-
-                            if player_desc:
-                                point_str = f" {point}" if point is not None else ""
-                                line_key = f"{player_desc} ({point_str.strip()})"
-                                side_label = raw_name.upper()
-                            else:
                                 clean_raw = normalize_text(raw_name)
                                 if clean_raw in clean_home or clean_home in clean_raw or clean_raw == "home":
                                     side_label = f"HOME: {home_team}"
@@ -141,73 +131,164 @@ if st.button("🚀 Run Live Market Scan", type="primary", use_container_width=Tr
                                     side_label = raw_name
 
                                 line_key = str(abs(float(point))) if m_key == "spreads" else (str(point) if m_key == "totals" else "main")
+                                if line_key not in market_data[m_key]:
+                                    market_data[m_key][line_key] = {}
+                                if side_label not in market_data[m_key][line_key]:
+                                    market_data[m_key][line_key][side_label] = {}
 
-                            if line_key not in market_data[m_key]:
-                                market_data[m_key][line_key] = {}
-                            if side_label not in market_data[m_key][line_key]:
-                                market_data[m_key][line_key][side_label] = {}
+                                market_data[m_key][line_key][side_label][b_name] = price
 
-                            market_data[m_key][line_key][side_label][b_name] = price
-
-                for m_key, lines in market_data.items():
-                    for line_key, sides in lines.items():
-                        if len(sides) < 2:
-                            continue
-
-                        side_avg_implied = {}
-                        valid_market = True
-                        for side_name, books_dict in sides.items():
-                            if len(books_dict) < 2:
-                                valid_market = False
-                                break
-                            side_avg_implied[side_name] = sum(american_to_implied(p) for p in books_dict.values()) / len(books_dict)
-
-                        if not valid_market:
-                            continue
-
-                        total_hold = sum(side_avg_implied.values())
-                        if total_hold <= 0:
-                            continue
-
-                        fair_probs = {side_name: imp / total_hold for side_name, imp in side_avg_implied.items()}
-
-                        for side_name, books_dict in sides.items():
-                            fair_p = fair_probs[side_name]
-                            flo = {b: p for b, p in books_dict.items() if is_fl_book(b)}
-                            if not flo:
+                    for m_key, lines in market_data.items():
+                        for line_key, sides in lines.items():
+                            if len(sides) < 2:
                                 continue
+                            side_avg_implied = {}
+                            valid_market = True
+                            for side_name, books_dict in sides.items():
+                                if len(books_dict) < 2:
+                                    valid_market = False
+                                    break
+                                side_avg_implied[side_name] = sum(american_to_implied(p) for p in books_dict.values()) / len(books_dict)
+                            if not valid_market:
+                                continue
+                            total_hold = sum(side_avg_implied.values())
+                            if total_hold <= 0:
+                                continue
+                            fair_probs = {side_name: imp / total_hold for side_name, imp in side_avg_implied.items()}
 
-                            best_b = max(flo, key=flo.get)
-                            best_o = flo[best_b]
-                            best_dec = american_to_decimal(best_o)
+                            for side_name, books_dict in sides.items():
+                                fair_p = fair_probs[side_name]
+                                flo = {b: p for b, p in books_dict.items() if is_fl_book(b)}
+                                if not flo:
+                                    continue
+                                best_b = max(flo, key=flo.get)
+                                best_o = flo[best_b]
+                                best_dec = american_to_decimal(best_o)
+                                b = best_dec - 1.0
+                                ev = (fair_p * b) - (1.0 - fair_p)
 
-                            b = best_dec - 1.0
-                            ev = (fair_p * b) - (1.0 - fair_p)
+                                if ev >= min_ev_input:
+                                    u, wager, net_profit, payout = calculate_quarter_kelly(ev, best_dec, bankroll_input, base_unit_input)
+                                    selection_disp = f"{mkt_display_name if 'mkt_display_name' in locals() else m_key.upper()}: {side_name}" if line_key == "main" else f"{m_key.upper()}: {side_name} ({line_key})"
+                                    all_opportunities.append({
+                                        "League": sport_title,
+                                        "Matchup": matchup,
+                                        "Selection": selection_disp,
+                                        "Platform": best_b,
+                                        "Odds": f"{best_o:+d}",
+                                        "Stake": f"${wager:.2f} ({u}u)",
+                                        "Net Profit": f"${net_profit:.2f}",
+                                        "Total Payout": f"${payout:.2f}",
+                                        "Fair Win %": f"{fair_p * 100:.1f}%",
+                                        "Edge (+EV)": f"{ev * 100:+.2f}%",
+                                        "ev_raw": ev
+                                    })
 
-                            if ev >= min_ev_input:
-                                u, wager, net_profit, payout = calculate_quarter_kelly(ev, best_dec, bankroll_input, base_unit_input)
-                                
-                                mkt_display_name = m_key.replace("_", " ").title()
-                                selection_disp = f"{mkt_display_name}: {line_key} - {side_name}" if "main" not in line_key else f"{mkt_display_name}: {side_name}"
+        # 2. Player Props Scan (Event-Level)
+        if include_props:
+            for s_key in PROP_SPORTS:
+                events_url = f"https://api.the-odds-api.com/v4/sports/{s_key}/events/?apiKey={clean_api_key}"
+                events, p_err, _ = fetch_json_with_status(events_url)
+                if p_err or not events or not isinstance(events, list):
+                    continue
 
-                                all_opportunities.append({
-                                    "League": sport_title,
-                                    "Matchup": matchup,
-                                    "Selection": selection_disp,
-                                    "Platform": best_b,
-                                    "Odds": f"{best_o:+d}",
-                                    "Stake": f"${wager:.2f} ({u}u)",
-                                    "Net Profit": f"${net_profit:.2f}",
-                                    "Total Payout": f"${payout:.2f}",
-                                    "Fair Win %": f"{fair_p * 100:.1f}%",
-                                    "Edge (+EV)": f"{ev * 100:+.2f}%",
-                                    "ev_raw": ev
-                                })
+                for evt in events[:5]:
+                    evt_id = evt.get("id")
+                    home_team = evt.get("home_team", "")
+                    away_team = evt.get("away_team", "")
+                    matchup = f"{away_team} @ {home_team}"
 
-            if all_opportunities:
-                df = pd.DataFrame(all_opportunities).sort_values(by="ev_raw", ascending=False).drop(columns=["ev_raw"])
-                st.success(f"Found {len(df)} +EV opportunities across Main Lines and Player Props:")
-                st.dataframe(df, use_container_width=True, hide_index=True)
-            else:
-                st.info(f"No active lines found with Edge ≥ {min_ev_input*100:.1f}%.")
-                
+                    prop_url = f"https://api.the-odds-api.com/v4/sports/{s_key}/events/{evt_id}/odds/?apiKey={clean_api_key}&regions={REGIONS}&markets={PROP_MARKETS}&oddsFormat=american"
+                    p_data, p_odds_err, p_rem = fetch_json_with_status(prop_url)
+                    if p_rem != "0":
+                        last_remaining = p_rem
+                    if p_odds_err or not p_data or not isinstance(p_data, dict):
+                        continue
+
+                    bookmakers = p_data.get("bookmakers", [])
+                    if len(bookmakers) < 2:
+                        continue
+
+                    prop_market_data = {}
+                    for book in bookmakers:
+                        b_name = book["title"]
+                        for mkt in book.get("markets", []):
+                            m_key = mkt["key"]
+                            if m_key not in prop_market_data:
+                                prop_market_data[m_key] = {}
+
+                            for outcome in mkt.get("outcomes", []):
+                                raw_name = outcome.get("name", "")
+                                player_desc = outcome.get("description", "")
+                                point = outcome.get("point", None)
+                                price = outcome.get("price")
+                                if price is None or not player_desc:
+                                    continue
+
+                                point_str = f" {point}" if point is not None else ""
+                                line_key = f"{player_desc} ({point_str.strip()})"
+                                side_label = raw_name.upper()
+
+                                if line_key not in prop_market_data[m_key]:
+                                    prop_market_data[m_key][line_key] = {}
+                                if side_label not in prop_market_data[m_key][line_key]:
+                                    prop_market_data[m_key][line_key][side_label] = {}
+
+                                prop_market_data[m_key][line_key][side_label][b_name] = price
+
+                    for m_key, lines in prop_market_data.items():
+                        for line_key, sides in lines.items():
+                            if len(sides) < 2:
+                                continue
+                            side_avg_implied = {}
+                            valid_market = True
+                            for side_name, books_dict in sides.items():
+                                if len(books_dict) < 2:
+                                    valid_market = False
+                                    break
+                                side_avg_implied[side_name] = sum(american_to_implied(p) for p in books_dict.values()) / len(books_dict)
+                            if not valid_market:
+                                continue
+                            total_hold = sum(side_avg_implied.values())
+                            if total_hold <= 0:
+                                continue
+                            fair_probs = {side_name: imp / total_hold for side_name, imp in side_avg_implied.items()}
+
+                            for side_name, books_dict in sides.items():
+                                fair_p = fair_probs[side_name]
+                                flo = {b: p for b, p in books_dict.items() if is_fl_book(b)}
+                                if not flo:
+                                    continue
+                                best_b = max(flo, key=flo.get)
+                                best_o = flo[best_b]
+                                best_dec = american_to_decimal(best_o)
+                                b = best_dec - 1.0
+                                ev = (fair_p * b) - (1.0 - fair_p)
+
+                                if ev >= min_ev_input:
+                                    u, wager, net_profit, payout = calculate_quarter_kelly(ev, best_dec, bankroll_input, base_unit_input)
+                                    mkt_display_name = m_key.replace("_", " ").title()
+                                    selection_disp = f"{mkt_display_name}: {line_key} - {side_name}"
+                                    all_opportunities.append({
+                                        "League": s_key.replace("_", " ").upper(),
+                                        "Matchup": matchup,
+                                        "Selection": selection_disp,
+                                        "Platform": best_b,
+                                        "Odds": f"{best_o:+d}",
+                                        "Stake": f"${wager:.2f} ({u}u)",
+                                        "Net Profit": f"${net_profit:.2f}",
+                                        "Total Payout": f"${payout:.2f}",
+                                        "Fair Win %": f"{fair_p * 100:.1f}%",
+                                        "Edge (+EV)": f"{ev * 100:+.2f}%",
+                                        "ev_raw": ev
+                                    })
+
+        st.info(f"API Credits Remaining: **{last_remaining}**")
+
+        if all_opportunities:
+            df = pd.DataFrame(all_opportunities).sort_values(by="ev_raw", ascending=False).drop(columns=["ev_raw"])
+            st.success(f"Found {len(df)} +EV opportunities across Main Lines & Player Props:")
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.info(f"No active lines found with Edge ≥ {min_ev_input*100:.1f}%.")
+            
