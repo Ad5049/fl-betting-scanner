@@ -418,9 +418,9 @@ with tab2:
                 save_json(updated_bets, BETS_FILE)
                 st.success("Auto-settlement completed!")
                 st.rerun()
-            else:
-                st.info("No main line pen
-                    with col_b:
+                        else:
+            st.info("No main line pending bets match completed games.")
+    with col_b:
         if st.button("🧹 Sunday Profit Sweep & Reset Baseline", use_container_width=True):
             if weekly_profit <= 0 and not any(b.get('status') != 'PENDING' for b in bets):
                 st.warning("No profits to sweep.")
@@ -435,3 +435,4 @@ with tab2:
                 st.success("Swept weekly profit! Ledger reset to $500.00.")
                 st.rerun()
                 
+            
