@@ -221,7 +221,6 @@ def evaluate_markets(market_data, sport_title, matchup, sport_key, max_odds_cap,
                 ev = (fair_p * b) - (1.0 - fair_p)
 
                 if ev >= min_ev_val:
-                    # STRICT $500 BANKROLL ANCHOR FOR KELLY SIZING
                     u, wager, net_profit, payout = calculate_quarter_kelly(ev, best_dec, 500.00, unit_val)
                     if is_prop:
                         mkt_disp = m_key.replace("_", " ").title()
@@ -425,4 +424,4 @@ with tab2:
     with col_b:
         if st.button("🧹 Sunday Profit Sweep & Reset Baseline", use_container_width=True):
             if weekly_profit <= 0 and not any(b.get('status') != 'PENDING' for b in bets):
-    
+                st.warning("No settled net profits to sweep standard ba
