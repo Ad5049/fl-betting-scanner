@@ -427,5 +427,9 @@ with tab2:
             sweep_data["total_withdrawn"] = round(sweep_data.get("total_withdrawn", 0.0) + max(0.0, weekly_profit), 2)
             st.session_state.sweep_data = sweep_data
             save_json(sweep_data, SWEEP_FILE)
-
-            st.session_state.tracked_bets = [b
+            active_pending = []
+            for b in bets:
+                if b.get('status') == 'PENDING':
+                    active_pending.append(b)
+            st.session_state.tracked_bets = active_pending
+            
