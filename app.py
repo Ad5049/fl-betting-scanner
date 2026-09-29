@@ -421,18 +421,8 @@ with tab2:
             else:
                 st.info("No main line pending bets match completed games.")
 
-            if st.button("🧹 Sunday Profit Sweep & Reset Baseline", use_container_width=True):
-            if weekly_profit <= 0 and not any(b.get('status') != 'PENDING' for b in bets):
-                st.warning("No profits to sweep.")
-            else:
-                sweep_data["total_withdrawn"] = round(sweep_data.get("total_withdrawn", 0.0) + max(0.0, weekly_profit), 2)
-                st.session_state.sweep_data = sweep_data
-                save_json(sweep_data, SWEEP_FILE)
-
-                st.session_state.tracked_bets = [b for b in bets if b.get('status') == 'PENDING']
-                save_json(st.session_state.tracked_bets, BETS_FILE)
-
-                st.success("Swept weekly profit! Ledger reset to $500.00.")
-                st.rerun()
-                
-                
+    with col_b:
+        if st.button("🧹 Sunday Profit Sweep & Reset Baseline", use_container_width=True):
+            sweep_data["total_withdrawn"] = round(sweep_data.get("total_withdrawn", 0.0) + max(0.0, weekly_profit), 2)
+            st.session_state.sweep_data = sweep_data
+    
